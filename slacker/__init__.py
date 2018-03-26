@@ -20,7 +20,6 @@ import time
 
 from slacker.utils import get_item_id_by_name
 
-
 __version__ = '0.9.65'
 
 API_BASE_URL = 'https://slack.com/api/{api}'
@@ -34,7 +33,7 @@ __all__ = ['Error', 'Response', 'BaseAPI', 'API', 'Auth', 'Users', 'Groups',
            'Stars', 'Emoji', 'Presence', 'RTM', 'Team', 'Reactions', 'Pins',
            'UserGroups', 'UserGroupsUsers', 'MPIM', 'OAuth', 'DND', 'Bots',
            'FilesComments', 'Reminders', 'TeamProfile', 'UsersProfile',
-           'IDPGroups', 'Apps', 'AppsPermissions', 'Slacker']
+           'IDPGroups', 'Apps', 'AppsPermissions', 'Slacker', 'Dialog']
 
 
 class Error(Exception):
@@ -47,6 +46,7 @@ class Response(object):
         self.body = json.loads(body)
         self.successful = self.body['ok']
         self.error = self.body.get('error')
+        self.message = self.body.get('response_metadata', {}).get('messages')
 
     def __str__(self):
         return json.dumps(self.body)
@@ -78,7 +78,7 @@ class BaseAPI(object):
 
             # handle HTTP 429 as documented at
             # https://api.slack.com/docs/rate-limits
-            elif response.status_code == requests.codes.too_many: # HTTP 429
+            elif response.status_code == requests.codes.too_many:  # HTTP 429
                 time.sleep(int(response.headers.get('retry-after', DEFAULT_WAIT)))
                 continue
 
@@ -96,7 +96,10 @@ class BaseAPI(object):
 
         response = Response(response.text)
         if not response.successful:
-            raise Error(response.error)
+            error = response.error
+            if response.message:
+                error = "{error}: {response.message}"
+            raise Error(error)
 
         return response
 
@@ -456,7 +459,7 @@ class IM(BaseAPI):
                             'oldest': oldest,
                             'count': count,
                             'inclusive': inclusive,
-                            'unreads' : int(unreads)
+                            'unreads': int(unreads)
                         })
 
     def replies(self, channel, thread_ts):
@@ -988,6 +991,15 @@ class Apps(BaseAPI):
         return self._permissions
 
 
+class Dialog(BaseAPI):
+    def open(self, dialog, trigger_id):
+        return self.post('dialog.open',
+                         data={
+                             'dialog': json.dumps(dialog),
+                             'trigger_id': trigger_id
+                         })
+
+
 class IncomingWebhook(object):
     def __init__(self, url=None, timeout=DEFAULT_TIMEOUT, proxies=None):
         self.url = url
@@ -1044,6 +1056,7 @@ class Slacker(object):
         self.reactions = Reactions(**api_args)
         self.idpgroups = IDPGroups(**api_args)
         self.usergroups = UserGroups(**api_args)
+        self.dialog = Dialog(**api_args)
         self.incomingwebhook = IncomingWebhook(url=incoming_webhook_url,
                                                timeout=timeout, proxies=proxies)
 
